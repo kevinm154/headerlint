@@ -1,0 +1,15 @@
+[project]
+name = "headerlint"
+version = "0.1.0"
+description = "A strict-by-default linter for raw HTTP header blocks"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "kevinm154" }]
+
+[project.scripts]
+headerlint = "headerlint.cli:main"
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
