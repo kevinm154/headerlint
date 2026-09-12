@@ -93,6 +93,12 @@ $ pip install -e .
 Or skip installing entirely and run it as a module from a checkout, as
 shown above.
 
+## Testing
+
+```
+$ python -m unittest discover -v
+```
+
 ## Status
 
 Early. The rule set covers the headers that come up most often in practice,
