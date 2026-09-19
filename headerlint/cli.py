@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 
 from .linter import lint
@@ -27,9 +28,16 @@ def main(argv: list[str] | None = None) -> int:
         help="check protocol correctness only; skip deprecated-header and "
              "missing-recommended-header findings",
     )
+    parser.add_argument(
+        "--format",
+        choices=("text", "json"),
+        default="text",
+        help="output format (default: text)",
+    )
     args = parser.parse_args(argv)
 
     had_error = False
+    results: list[dict[str, object]] = []
     for path in args.files:
         try:
             text = _read(path)
@@ -39,15 +47,25 @@ def main(argv: list[str] | None = None) -> int:
             continue
 
         findings = lint(text, lenient=args.lenient)
-        if not findings:
+        if any(f.severity == "error" for f in findings):
+            had_error = True
+
+        if args.format == "json":
+            results.append({
+                "file": path,
+                "findings": [f.to_dict() for f in findings],
+            })
             continue
 
+        if not findings:
+            continue
         if len(args.files) > 1:
             print(f"{path}:")
         for finding in findings:
             print(finding)
-            if finding.severity == "error":
-                had_error = True
+
+    if args.format == "json":
+        print(json.dumps(results, indent=2))
 
     return 1 if had_error else 0
 

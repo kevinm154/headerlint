@@ -50,6 +50,14 @@ class Finding:
     def __str__(self) -> str:
         return f"{self.line}: {self.severity}: {self.code}: {self.message}"
 
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "line": self.line,
+            "severity": self.severity,
+            "code": self.code,
+            "message": self.message,
+        }
+
 
 @dataclass
 class HeaderLine:

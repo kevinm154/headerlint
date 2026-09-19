@@ -69,6 +69,26 @@ The exit code is `1` if any finding has severity `error`, `0` otherwise -
 $ curl -si https://example.com | python -m headerlint -
 ```
 
+Pass `--format json` to get machine-readable output instead - one object per
+input file, each with its findings:
+
+```
+$ python -m headerlint --format json response.http
+[
+  {
+    "file": "response.http",
+    "findings": [
+      {
+        "line": 1,
+        "severity": "warning",
+        "code": "missing-recommended-header",
+        "message": "response has no 'strict-transport-security' header: without it, a plain-HTTP request can be intercepted before the first redirect"
+      }
+    ]
+  }
+]
+```
+
 ## Library use
 
 ```python
