@@ -8,7 +8,8 @@ Two layers of checks run over a header block:
      would choke on or handle unpredictably.
 
   2. Policy-level checks (on unless --lenient): deprecated headers still
-     present, and recommended response headers that are missing. These
+     present, unregistered Authorization schemes, and recommended response
+     headers that are missing. These
      are opinions about good practice, not protocol requirements, which
      is why they're the ones the escape hatch turns off.
 """
@@ -21,6 +22,16 @@ from dataclasses import dataclass
 TOKEN_RE = re.compile(r"^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$")
 STATUS_LINE_RE = re.compile(r"^HTTP/\d\.\d \d{3}")
 REQUEST_LINE_RE = re.compile(r"^[A-Z]+ \S+ HTTP/\d\.\d$")
+
+HOST_BAD_CHARS_RE = re.compile(r"[\s/@]")
+TOKEN68_RE = re.compile(r"^[A-Za-z0-9\-._~+/]+=*$")
+BASE64_RE = re.compile(r"^[A-Za-z0-9+/]+={0,2}$")
+
+# Schemes from the IANA HTTP Authentication Scheme registry.
+KNOWN_AUTH_SCHEMES = {
+    "basic", "bearer", "digest", "negotiate", "ntlm", "hoba", "mutual",
+    "dpop", "scram-sha-1", "scram-sha-256", "vapid", "aws4-hmac-sha256",
+}
 
 # Headers that legitimately appear more than once in a single message.
 REPEATABLE = {"set-cookie", "warning", "via", "link"}
@@ -176,6 +187,81 @@ def _check_recommended(headers: list[HeaderLine], lines: list[str]) -> list[Find
     return findings
 
 
+def _split_authorization(value: str) -> tuple[str, str]:
+    scheme, _, credentials = value.partition(" ")
+    return scheme, credentials.strip()
+
+
+def _check_request(headers: list[HeaderLine], lines: list[str]) -> list[Finding]:
+    """Protocol checks that only make sense on a request: Host and Authorization."""
+    if not lines or not REQUEST_LINE_RE.match(lines[0]):
+        return []
+    findings = []
+
+    # RFC 7230 5.4: an HTTP/1.1 request without Host must be rejected.
+    hosts = [h for h in headers if h.name.lower() == "host"]
+    if not hosts and lines[0].endswith("HTTP/1.1"):
+        findings.append(Finding(
+            1, "error", "missing-host",
+            "HTTP/1.1 request has no 'Host' header, which servers are required to reject",
+        ))
+    for h in hosts:
+        if HOST_BAD_CHARS_RE.search(h.value):
+            findings.append(Finding(
+                h.line, "error", "invalid-host",
+                f"Host must be a bare host[:port], without a scheme, path, "
+                f"userinfo or whitespace: {h.value!r}",
+            ))
+
+    for h in headers:
+        if h.name.lower() != "authorization":
+            continue
+        scheme, credentials = _split_authorization(h.value)
+        if not scheme or not TOKEN_RE.match(scheme):
+            findings.append(Finding(
+                h.line, "error", "invalid-authorization",
+                "Authorization must start with an auth scheme token",
+            ))
+        elif not credentials:
+            findings.append(Finding(
+                h.line, "error", "invalid-authorization",
+                f"Authorization scheme {scheme!r} is not followed by any credentials",
+            ))
+        elif scheme.lower() == "basic" and not _is_base64(credentials):
+            findings.append(Finding(
+                h.line, "error", "invalid-authorization",
+                "Basic credentials must be base64-encoded 'user:password'",
+            ))
+        elif scheme.lower() == "bearer" and not TOKEN68_RE.match(credentials):
+            findings.append(Finding(
+                h.line, "error", "invalid-authorization",
+                "Bearer token contains characters outside the token68 syntax",
+            ))
+    return findings
+
+
+def _is_base64(value: str) -> bool:
+    return len(value) % 4 == 0 and bool(BASE64_RE.match(value))
+
+
+def _check_auth_schemes(headers: list[HeaderLine], lines: list[str]) -> list[Finding]:
+    if not lines or not REQUEST_LINE_RE.match(lines[0]):
+        return []
+    findings = []
+    for h in headers:
+        if h.name.lower() != "authorization":
+            continue
+        scheme, credentials = _split_authorization(h.value)
+        if scheme and credentials and TOKEN_RE.match(scheme) \
+                and scheme.lower() not in KNOWN_AUTH_SCHEMES:
+            findings.append(Finding(
+                h.line, "warning", "unknown-auth-scheme",
+                f"{scheme!r} is not in the IANA HTTP authentication scheme "
+                "registry; check for a typo",
+            ))
+    return findings
+
+
 def lint(text: str, lenient: bool = False) -> list[Finding]:
     """Lint a block of raw HTTP header text.
 
@@ -187,8 +273,10 @@ def lint(text: str, lenient: bool = False) -> list[Finding]:
     lines = text.splitlines()
     headers, findings = parse(lines)
     findings.extend(_check_duplicates(headers))
+    findings.extend(_check_request(headers, lines))
     if not lenient:
         findings.extend(_check_deprecated(headers))
+        findings.extend(_check_auth_schemes(headers, lines))
         findings.extend(_check_recommended(headers, lines))
     findings.sort(key=lambda f: (f.line, f.code))
     return findings

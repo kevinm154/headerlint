@@ -6,7 +6,9 @@ from headerlint.linter import (
     Finding,
     _check_deprecated,
     _check_duplicates,
+    _check_auth_schemes,
     _check_recommended,
+    _check_request,
     lint,
     parse,
 )
@@ -140,6 +142,64 @@ class RecommendedCheckTests(unittest.TestCase):
         lines = ["Content-Type: text/html"]
         headers, _ = parse(lines)
         self.assertEqual(_check_recommended(headers, lines), [])
+
+
+class RequestCheckTests(unittest.TestCase):
+    def check(self, *lines):
+        lines = list(lines)
+        headers, _ = parse(lines)
+        return _check_request(headers, lines)
+
+    def test_http11_request_without_host(self):
+        findings = self.check("GET / HTTP/1.1", "Accept: */*")
+        self.assertEqual(codes(findings), ["missing-host"])
+        self.assertEqual(findings[0].line, 1)
+
+    def test_http10_request_without_host_is_fine(self):
+        self.assertEqual(self.check("GET / HTTP/1.0", "Accept: */*"), [])
+
+    def test_host_with_path_or_userinfo(self):
+        for value in ("example.com/path", "user@example.com", "a b"):
+            findings = self.check("GET / HTTP/1.1", f"Host: {value}")
+            self.assertEqual(codes(findings), ["invalid-host"], value)
+            self.assertEqual(findings[0].line, 2)
+
+    def test_host_with_port_is_fine(self):
+        self.assertEqual(self.check("GET / HTTP/1.1", "Host: example.com:8080"), [])
+
+    def test_responses_are_ignored(self):
+        self.assertEqual(self.check("HTTP/1.1 200 OK", "Authorization: Basic"), [])
+
+    def test_authorization_without_credentials(self):
+        findings = self.check("GET / HTTP/1.1", "Host: a", "Authorization: Bearer")
+        self.assertEqual(codes(findings), ["invalid-authorization"])
+        self.assertEqual(findings[0].line, 3)
+
+    def test_basic_must_be_base64(self):
+        good = "dXNlcjpwYXNz"
+        self.assertEqual(
+            self.check("GET / HTTP/1.1", "Host: a", "Authorization: Basic " + good), []
+        )
+        findings = self.check("GET / HTTP/1.1", "Host: a", "Authorization: Basic user:pass")
+        self.assertEqual(codes(findings), ["invalid-authorization"])
+
+    def test_bearer_token_syntax(self):
+        ok = self.check("GET / HTTP/1.1", "Host: a", "Authorization: Bearer abc.def-ghi_1")
+        self.assertEqual(ok, [])
+        bad = self.check("GET / HTTP/1.1", "Host: a", "Authorization: Bearer a b!")
+        self.assertEqual(codes(bad), ["invalid-authorization"])
+
+    def test_unknown_scheme_is_a_policy_warning(self):
+        lines = ["GET / HTTP/1.1", "Host: a", "Authorization: Bearr abc"]
+        headers, _ = parse(lines)
+        self.assertEqual(_check_request(headers, lines), [])
+        findings = _check_auth_schemes(headers, lines)
+        self.assertEqual(codes(findings), ["unknown-auth-scheme"])
+        self.assertEqual(findings[0].severity, "warning")
+        self.assertEqual(
+            codes(lint("\n".join(lines))), ["unknown-auth-scheme"]
+        )
+        self.assertEqual(lint("\n".join(lines), lenient=True), [])
 
 
 class LintTests(unittest.TestCase):

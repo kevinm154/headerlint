@@ -18,10 +18,14 @@ Two kinds of things get flagged:
 
 - **Protocol-level problems** - a line with no `:`, a header name with
   invalid characters, obsolete line folding, headers repeated in a way that
-  has no defined meaning. These always run; they're not opinions.
+  has no defined meaning. On requests, also an HTTP/1.1 request with no
+  `Host`, a `Host` that isn't a bare host and port, and an `Authorization`
+  header with no credentials or with malformed `Basic` or `Bearer` ones.
+  These always run; they're not opinions.
 - **Policy-level problems** - headers that are deprecated but still show up
   in the wild (`X-XSS-Protection`, `Public-Key-Pins`), and responses that
-  are missing headers like `Strict-Transport-Security`. These run by
+  are missing headers like `Strict-Transport-Security`, and requests using
+  an `Authorization` scheme that isn't in the IANA registry. These run by
   default too, because "strict by default" is the point.
 
 Pass `--lenient` to turn off the policy-level layer and check protocol
